@@ -613,25 +613,14 @@ const proxyConfig = {
   // WebSocket protocol configuration
   protocolMap: {
     '/ws/graphql': 'graphql-transport-ws',
-    '/graphql/ws': 'graphql-ws',
-    '/subscriptions': 'graphql-transport-ws',
-    '/api/graphql/ws': 'graphql-transport-ws'
+    '/api/graphql': 'graphql-transport-ws'
   },
 
   routes: {
     // CORRECTED: WebSocket endpoints should map directly without path duplication
     '/ws/graphql': 'wss://api.aion.to/ws/graphql',
-    '/graphql/ws': 'wss://api.aion.to/graphql/ws',
-    '/subscriptions': 'wss://api.aion.to/subscriptions',
-    '/api/graphql/ws': 'wss://api.aion.to/api/graphql/ws',
-
     // HTTP endpoints for queries/mutations
     '/api/graphql': 'https://api.aion.to/api/graphql',
-    '/graphql': 'https://api.aion.to/graphql',
-
-    // Other WebSocket routes
-    '/socket.io': 'wss://api.aion.to/socket.io',
-    '/websocket': 'wss://api.aion.to/websocket'
   }
 };
 
