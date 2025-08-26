@@ -1,0 +1,27 @@
+{
+  "name": "websocket-proxy-server",
+  "version": "1.0.0",
+  "description": "WebSocket proxy server for routing connections",
+  "main": "websocket-proxy.js",
+  "scripts": {
+    "start": "node websocket-proxy.js",
+    "dev": "nodemon websocket-proxy.js",
+    "debug": "nodemon debug-websocket-proxy.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "websocket",
+    "proxy",
+    "server",
+    "nodejs"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "http-proxy-middleware": "^2.0.6",
+    "ws": "^8.14.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  }
+}
