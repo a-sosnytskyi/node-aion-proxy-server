@@ -3,6 +3,10 @@
   "version": "1.0.0",
   "description": "WebSocket proxy server for routing connections",
   "main": "src/proxy.js",
+  "engines": {
+    "node": ">=14.0.0",
+    "npm": ">=6.0.0"
+  },
   "scripts": {
     "start": "node src/proxy.js",
     "dev": "nodemon src/proxy.js"

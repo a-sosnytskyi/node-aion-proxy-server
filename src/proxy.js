@@ -1,3 +1,7 @@
+/**
+ * @fileoverview WebSocket and HTTP proxy server with bidirectional message forwarding
+ */
+
 const http = require('http');
 const httpProxy = require('http-proxy-middleware');
 const WebSocket = require('ws');
@@ -5,9 +9,18 @@ const url = require('url');
 const { loadConfig } = require("./config-loader");
 
 /**
- * Simplified WebSocket Proxy Server
+ * WebSocket and HTTP proxy server
+ * @class
  */
 class Proxy {
+  /**
+   * Create a proxy server instance
+   * @param {Object} [config={}] - Configuration options
+   * @param {number} [config.port=8080] - Server port
+   * @param {string} [config.httpTarget] - HTTP proxy target URL
+   * @param {string} [config.wsTarget] - WebSocket proxy target URL
+   * @param {number} [config.connectionTimeout=10000] - Connection timeout in ms
+   */
   constructor(config = {}) {
     this.port = config.port || 8080;
     this.httpTarget = config.httpTarget;
@@ -20,7 +33,8 @@ class Proxy {
   }
 
   /**
-   * Setup HTTP proxy middleware
+   * Configure HTTP proxy middleware with CORS support
+   * @private
    */
   setupHttpProxy() {
     if (!this.httpTarget) return;
@@ -56,7 +70,8 @@ class Proxy {
   }
 
   /**
-   * Setup WebSocket upgrade handler
+   * Setup WebSocket upgrade request handler
+   * @private
    */
   setupWebSocketUpgrade() {
     this.server.on('upgrade', (request, socket, head) => {
@@ -73,7 +88,11 @@ class Proxy {
   }
 
   /**
-   * Handle WebSocket upgrade request
+   * Handle WebSocket upgrade and establish target connection
+   * @private
+   * @param {http.IncomingMessage} request - HTTP upgrade request
+   * @param {net.Socket} socket - Client socket
+   * @param {Buffer} head - Upgrade head buffer
    */
   async handleWebSocketUpgrade(request, socket, head) {
     try {
@@ -146,7 +165,11 @@ class Proxy {
   }
 
   /**
-   * Establish bidirectional WebSocket proxy
+   * Establish bidirectional WebSocket proxy with message forwarding
+   * @private
+   * @param {WebSocket} clientWs - Client WebSocket connection
+   * @param {WebSocket} targetWs - Target WebSocket connection
+   * @param {string} pathname - Request pathname for logging
    */
   establishProxy(clientWs, targetWs, pathname) {
     console.log(`WebSocket proxy established for ${pathname}`);
@@ -221,7 +244,10 @@ class Proxy {
   }
 
   /**
-   * Get headers to forward to target server
+   * Extract and filter headers to forward to target server
+   * @private
+   * @param {http.IncomingMessage} request - HTTP request
+   * @returns {Object} Filtered headers object
    */
   getProxyHeaders(request) {
     const headers = {};
@@ -246,6 +272,7 @@ class Proxy {
 
   /**
    * Start the proxy server
+   * @returns {Promise<void>} Promise that resolves when server starts
    */
   start() {
     return new Promise((resolve, reject) => {
@@ -264,7 +291,8 @@ class Proxy {
   }
 
   /**
-   * Stop the proxy server
+   * Stop the proxy server gracefully
+   * @returns {Promise<void>} Promise that resolves when server stops
    */
   stop() {
     return new Promise((resolve) => {
