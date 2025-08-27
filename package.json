@@ -1,13 +1,11 @@
 {
-  "name": "websocket-proxy-server",
+  "name": "node-aion-proxy-server",
   "version": "1.0.0",
   "description": "WebSocket proxy server for routing connections",
-  "main": "websocket-proxy.js",
+  "main": "src/proxy.js",
   "scripts": {
-    "start": "node websocket-proxy.js",
-    "dev": "nodemon websocket-proxy.js",
-    "debug": "nodemon debug-websocket-proxy.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node src/proxy.js",
+    "dev": "nodemon src/proxy.js"
   },
   "keywords": [
     "websocket",
@@ -19,6 +17,7 @@
   "license": "MIT",
   "dependencies": {
     "http-proxy-middleware": "^2.0.6",
+    "js-yaml": "^4.1.0",
     "ws": "^8.14.2"
   },
   "devDependencies": {

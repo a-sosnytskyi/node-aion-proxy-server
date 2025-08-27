@@ -1,23 +1,23 @@
 const http = require('http');
-const https = require('https');
 const httpProxy = require('http-proxy-middleware');
 const WebSocket = require('ws');
 const url = require('url');
+const { loadConfig } = require("./config-loader");
 
 /**
- * Enhanced WebSocket Proxy Server with full message logging
+ * Simplified WebSocket Proxy Server
+ * Auto-detects protocol and uses client headers for WebSocket protocol
  */
-class WebSocketProxy {
+class Proxy {
   constructor(config = {}) {
     this.port = config.port || 8080;
-    this.routes = config.routes || {};
-    this.protocolMap = config.protocolMap || {};
-    this.defaultTarget = config.defaultTarget || null;
+    this.httpTarget = config.httpTarget;
+    this.wsTarget = config.wsTarget;
     this.connectionTimeout = config.connectionTimeout || 15000;
     this.maxRetries = config.maxRetries || 3;
     this.retryDelay = config.retryDelay || 1000;
 
-    // Create HTTP server
+    // Create an HTTP server
     this.server = http.createServer();
 
     // Setup proxy middleware for HTTP requests
@@ -31,21 +31,22 @@ class WebSocketProxy {
    * Setup HTTP proxy middleware for regular HTTP requests
    */
   setupHttpProxy() {
+    if (!this.httpTarget) {
+      console.warn('No HTTP target configured');
+      return;
+    }
+
     const httpProxyMiddleware = httpProxy.createProxyMiddleware({
-      target: this.defaultTarget,
+      target: this.httpTarget,
       changeOrigin: true,
-      ws: false, // We handle WebSocket separately
-      router: (req) => {
-        const pathname = url.parse(req.url).pathname;
-        return this.getTargetForPath(pathname) || this.defaultTarget;
-      },
+      ws: false,
       onError: (err, req, res) => {
         console.error('HTTP Proxy Error:', err.message);
         if (!res.headersSent) {
           res.writeHead(502, { 'Content-Type': 'text/plain' });
           res.end('Bad Gateway');
         }
-      }
+      },
     });
 
     this.server.on('request', (req, res) => {
@@ -60,6 +61,7 @@ class WebSocketProxy {
         return;
       }
 
+      console.log(`HTTP ${req.method} ${req.url} -> ${this.httpTarget}`);
       httpProxyMiddleware(req, res);
     });
   }
@@ -69,62 +71,54 @@ class WebSocketProxy {
    */
   setupWebSocketUpgrade() {
     this.server.on('upgrade', async (request, socket, head) => {
-      const parsedUrl = url.parse(request.url, true);
-      const pathname = parsedUrl.pathname;
-      const targetUrl = this.getTargetForPath(pathname);
-
-      if (!targetUrl) {
-        console.error('No target found for path:', pathname);
-        socket.write('HTTP/1.1 404 Not Found\r\n\r\n');
+      if (!this.wsTarget) {
+        console.error('No WebSocket target configured');
+        socket.write('HTTP/1.1 502 Bad Gateway\r\n\r\n');
         socket.destroy();
         return;
       }
 
-      console.log(`Proxying WebSocket connection: ${pathname} -> ${targetUrl}`);
-      console.log('WebSocket connection attempt from:', request.headers.origin);
+      const parsedUrl = url.parse(request.url, true);
+      console.log(`WebSocket upgrade: ${request.url} -> ${this.wsTarget}`);
+      console.log('WebSocket connection from:', request.headers.origin);
 
-      await this.handleWebSocketUpgrade(request, socket, head, targetUrl);
+      await this.handleWebSocketUpgrade(request, socket, head);
     });
   }
 
   /**
-   * Handle WebSocket upgrade request with fixed URL building
+   * Handle WebSocket upgrade request
    */
-  async handleWebSocketUpgrade(request, socket, head, targetUrl) {
+  async handleWebSocketUpgrade(request, socket, head) {
     let retries = 0;
 
     const attemptConnection = async () => {
       try {
         const parsedUrl = url.parse(request.url, true);
-        const pathname = parsedUrl.pathname;
 
-        // Build correct target WebSocket URL without duplicating paths
-        const targetWsUrl = this.buildTargetWebSocketUrl(targetUrl, parsedUrl.search || '');
+        // Build target WebSocket URL with path and query
+        const targetWsUrl = this.buildTargetWebSocketUrl(parsedUrl.pathname, parsedUrl.search || '');
 
         console.log(`Creating WebSocket connection to: ${targetWsUrl} (attempt ${retries + 1})`);
 
-        // Get protocol for this path
-        const protocol = this.getProtocolForPath(pathname);
+        // Get protocol from client headers
+        const clientProtocol = request.headers['sec-websocket-protocol'];
         const headers = this.getProxyHeaders(request);
 
-        // Override protocol if specified in configuration
-        if (protocol) {
-          headers['sec-websocket-protocol'] = protocol;
-          console.log(`Using WebSocket protocol: ${protocol} for path: ${pathname}`);
-        }
+        console.log(`Client WebSocket protocol: ${clientProtocol || 'none'}`);
 
         // Create WebSocket connection with enhanced options
         const wsOptions = {
           headers: headers,
-          followRedirects: true, // Allow following redirects
+          followRedirects: true,
           maxRedirects: 3,
           perMessageDeflate: false,
           handshakeTimeout: 10000
         };
 
-        // Create WebSocket connection
-        const targetWs = protocol
-          ? new WebSocket(targetWsUrl, protocol, wsOptions)
+        // Create WebSocket connection with client's protocol if specified
+        const targetWs = clientProtocol
+          ? new WebSocket(targetWsUrl, clientProtocol, wsOptions)
           : new WebSocket(targetWsUrl, wsOptions);
 
         let clientWs = null;
@@ -134,7 +128,7 @@ class WebSocketProxy {
         // Handle target connection timeout
         const connectionTimeout = setTimeout(() => {
           if (!isUpgraded && !connectionClosed) {
-            console.error(`Target connection timeout for: ${targetWsUrl} (attempt ${retries + 1})`);
+            console.error(`Target connection timeout: ${targetWsUrl} (attempt ${retries + 1})`);
             connectionClosed = true;
 
             if (retries < this.maxRetries) {
@@ -157,8 +151,9 @@ class WebSocketProxy {
 
           clearTimeout(connectionTimeout);
           console.log('Connected to target WebSocket server:', targetWsUrl);
-          if (protocol) {
-            console.log('Using protocol:', protocol);
+
+          if (targetWs.protocol) {
+            console.log('Negotiated protocol:', targetWs.protocol);
           }
 
           // Only upgrade client connection after target is ready
@@ -177,7 +172,7 @@ class WebSocketProxy {
                 }
 
                 // Setup bidirectional proxy
-                this.establishWebSocketProxy(clientWs, targetWs, pathname);
+                this.establishWebSocketProxy(clientWs, targetWs, parsedUrl.pathname);
               });
             } catch (error) {
               console.error('Error upgrading client connection:', error.message);
@@ -196,13 +191,6 @@ class WebSocketProxy {
 
           clearTimeout(connectionTimeout);
           console.error(`Target WebSocket error (attempt ${retries + 1}):`, error.message);
-
-          // Check for protocol-related errors
-          if (error.message.includes('protocol') || error.message.includes('Unexpected server response: 400')) {
-            console.error('WebSocket protocol negotiation failed. Checking protocol configuration...');
-            console.error('Expected protocol:', protocol);
-            console.error('Try connecting without protocol or with different protocol');
-          }
 
           // Check for authentication errors
           if (error.message.includes('401') || error.message.includes('403')) {
@@ -267,7 +255,7 @@ class WebSocketProxy {
   }
 
   /**
-   * Establish bidirectional WebSocket proxy with full message logging
+   * Establish bidirectional WebSocket proxy with message logging
    */
   establishWebSocketProxy(clientWs, targetWs, pathname) {
     if (!clientWs || !targetWs) {
@@ -294,7 +282,7 @@ class WebSocketProxy {
       }
     };
 
-    // Enhanced message handling with FULL message logging
+    // Message handling with logging
     const forwardMessage = (from, to, data, direction) => {
       if (!isProxyActive) return;
 
@@ -304,10 +292,10 @@ class WebSocketProxy {
       }
 
       try {
-        to.send(data);
+        to.send(data.toString());
         messageCount[direction === 'client→target' ? 'clientToTarget' : 'targetToClient']++;
 
-        // FULL message logging - display complete message content
+        // Log message content
         let messageStr;
         try {
           // Try to parse as JSON for pretty printing
@@ -347,20 +335,10 @@ class WebSocketProxy {
       forwardMessage(targetWs, clientWs, data, 'target→client');
     });
 
-    // Handle target WebSocket close
+    // Handle connection close events
     targetWs.on('close', (code, reason) => {
       const reasonStr = reason ? reason.toString() : 'no reason';
       console.log(`Target WebSocket closed for ${pathname}: code=${code}, reason="${reasonStr}"`);
-
-      // Enhanced error code analysis
-      if (code === 1011) {
-        console.error('Server internal error - check server logs and configuration');
-      } else if (code === 1002) {
-        console.error('Protocol error - check message format and protocol compliance');
-      } else if (code === 1003) {
-        console.error('Unsupported data - check message types and payload format');
-      }
-
       cleanup(`target closed: ${code} ${reasonStr}`);
 
       if (clientWs && clientWs.readyState === WebSocket.OPEN) {
@@ -368,7 +346,6 @@ class WebSocketProxy {
       }
     });
 
-    // Handle client WebSocket close
     clientWs.on('close', (code, reason) => {
       const reasonStr = reason ? reason.toString() : 'no reason';
       console.log(`Client WebSocket closed for ${pathname}: code=${code}, reason="${reasonStr}"`);
@@ -379,7 +356,7 @@ class WebSocketProxy {
       }
     });
 
-    // Handle client WebSocket errors
+    // Handle errors during proxy
     clientWs.on('error', (error) => {
       console.error(`Client WebSocket error for ${pathname}:`, error.message);
       cleanup(`client error: ${error.message}`);
@@ -389,7 +366,6 @@ class WebSocketProxy {
       }
     });
 
-    // Handle target WebSocket errors during proxy
     targetWs.on('error', (error) => {
       console.error(`Target WebSocket error during proxy for ${pathname}:`, error.message);
       cleanup(`target error: ${error.message}`);
@@ -406,7 +382,7 @@ class WebSocketProxy {
       }
     });
 
-    // Reduced ping interval to avoid timeouts
+    // Keep connections alive
     const pingInterval = setInterval(() => {
       if (!isProxyActive) {
         clearInterval(pingInterval);
@@ -428,86 +404,17 @@ class WebSocketProxy {
           console.error(`Error sending ping to client for ${pathname}:`, error.message);
         }
       }
-    }, 25000); // Ping every 25 seconds
+    }, 25000);
 
     console.log(`WebSocket proxy established successfully for ${pathname}`);
   }
 
   /**
-   * Get target server URL for a given path
+   * Build target WebSocket URL from configured target and request path
    */
-  getTargetForPath(pathname) {
-    // Check exact path matches first
-    if (this.routes[pathname]) {
-      return this.routes[pathname];
-    }
-
-    // Check prefix matches (sort by length descending to match most specific first)
-    const sortedRoutes = Object.entries(this.routes)
-      .sort(([a], [b]) => b.length - a.length);
-
-    for (const [route, target] of sortedRoutes) {
-      if (pathname.startsWith(route)) {
-        return target;
-      }
-    }
-
-    return this.defaultTarget;
-  }
-
-  /**
-   * Get WebSocket protocol for a given path
-   */
-  getProtocolForPath(pathname) {
-    // Check exact path matches first
-    if (this.protocolMap && this.protocolMap[pathname]) {
-      return this.protocolMap[pathname];
-    }
-
-    // Check prefix matches
-    if (this.protocolMap) {
-      const sortedProtocols = Object.entries(this.protocolMap)
-        .sort(([a], [b]) => b.length - a.length);
-
-      for (const [route, protocol] of sortedProtocols) {
-        if (pathname.startsWith(route)) {
-          return protocol;
-        }
-      }
-    }
-
-    // Default protocols for common GraphQL patterns
-    if (pathname.includes('graphql') || pathname.includes('subscription')) {
-      return 'graphql-transport-ws';
-    }
-
-    return undefined;
-  }
-
-  /**
-   * Build target WebSocket URL from target URL - FIXED VERSION
-   */
-  buildTargetWebSocketUrl(targetUrl, queryString = '') {
-    const parsedTarget = url.parse(targetUrl);
-
-    // Convert HTTP(S) to WebSocket protocol
-    let protocol;
-    if (targetUrl.startsWith('ws://') || targetUrl.startsWith('wss://')) {
-      // Already a WebSocket URL
-      return targetUrl + queryString;
-    } else if (targetUrl.startsWith('https://')) {
-      protocol = 'wss:';
-    } else {
-      protocol = 'ws:';
-    }
-
-    const host = parsedTarget.host;
-    const path = parsedTarget.path || parsedTarget.pathname || '';
-
-    // Build final URL
-    const finalUrl = `${protocol}//${host}${path}${queryString}`;
-
-    console.log(`Built WebSocket URL: ${targetUrl} + ${queryString} -> ${finalUrl}`);
+  buildTargetWebSocketUrl(pathname, queryString = '') {
+    const finalUrl = `${this.wsTarget}${pathname}${queryString}`;
+    console.log(`Built WebSocket URL: ${this.wsTarget} + ${pathname}${queryString} -> ${finalUrl}`);
     return finalUrl;
   }
 
@@ -533,16 +440,6 @@ class WebSocketProxy {
       }
     });
 
-    // For GraphQL subscriptions, ensure proper protocol is set if not present
-    if (!headers['sec-websocket-protocol']) {
-      const pathname = url.parse(request.url).pathname;
-      const protocol = this.getProtocolForPath(pathname);
-
-      if (protocol) {
-        headers['sec-websocket-protocol'] = protocol;
-      }
-    }
-
     // Add connection-specific headers for better compatibility
     headers['sec-websocket-version'] = '13';
     headers['connection'] = 'Upgrade';
@@ -562,21 +459,13 @@ class WebSocketProxy {
           return;
         }
 
-        console.log(`WebSocket Proxy Server running on port ${this.port}`);
+        console.log(`Simplified WebSocket Proxy Server running on port ${this.port}`);
         console.log('Configuration:');
+        console.log(`  HTTP target: ${this.httpTarget || 'none'}`);
+        console.log(`  WebSocket target: ${this.wsTarget || 'none'}`);
         console.log(`  Connection timeout: ${this.connectionTimeout}ms`);
         console.log(`  Max retries: ${this.maxRetries}`);
         console.log(`  Retry delay: ${this.retryDelay}ms`);
-        console.log('Routes configured:');
-        for (const [route, target] of Object.entries(this.routes)) {
-          console.log(`  ${route} -> ${target}`);
-          if (this.protocolMap[route]) {
-            console.log(`    Protocol: ${this.protocolMap[route]}`);
-          }
-        }
-        if (this.defaultTarget) {
-          console.log(`  Default target: ${this.defaultTarget}`);
-        }
         resolve();
       });
 
@@ -602,44 +491,10 @@ class WebSocketProxy {
   }
 }
 
-// Enhanced configuration with corrected URL mappings
-const proxyConfig = {
-  port: 8080,
-  defaultTarget: 'https://api.aion.to',
-  connectionTimeout: 20000,  // Increased timeout
-  maxRetries: 3,
-  retryDelay: 1000,
-
-  // WebSocket protocol configuration
-  protocolMap: {
-    '/ws/graphql': 'graphql-transport-ws',
-    '/api/graphql': 'graphql-transport-ws'
-  },
-
-  routes: {
-    // CORRECTED: WebSocket endpoints should map directly without path duplication
-    '/ws/graphql': 'wss://api.aion.to/ws/graphql',
-    // HTTP endpoints for queries/mutations
-    '/api/graphql': 'https://api.aion.to/api/graphql',
-  }
-};
-
 // Create and start proxy server
-const proxy = new WebSocketProxy(proxyConfig);
+const proxy = new Proxy(loadConfig());
 
 proxy.start().then(() => {
-  console.log('\n=== GraphQL WebSocket Proxy Server with Full Message Logging ===');
-  console.log('Key features:');
-  console.log('  ✓ Full message content logging (no truncation)');
-  console.log('  ✓ JSON pretty-printing for structured messages');
-  console.log('  ✓ Message size and direction tracking');
-  console.log('  ✓ Fixed URL duplication issue');
-  console.log('  ✓ Enhanced error handling');
-  console.log('\nSupported GraphQL protocols:');
-  console.log('  - graphql-transport-ws (modern standard)');
-  console.log('  - graphql-ws (legacy)');
-  console.log('\nExample client connection:');
-  console.log(`  ws://localhost:${proxyConfig.port}/ws/graphql?token=YOUR_TOKEN`);
   console.log('\nPress Ctrl+C to stop the server');
 }).catch((error) => {
   console.error('Failed to start proxy server:', error.message);
@@ -648,7 +503,7 @@ proxy.start().then(() => {
 
 // Graceful shutdown
 process.on('SIGINT', async () => {
-  console.log('\nShutting down GraphQL WebSocket proxy server...');
+  console.log('\nShutting down WebSocket proxy server...');
   try {
     await proxy.stop();
     process.exit(0);
@@ -670,4 +525,4 @@ process.on('unhandledRejection', (reason, promise) => {
   process.exit(1);
 });
 
-module.exports = WebSocketProxy;
+module.exports = Proxy;

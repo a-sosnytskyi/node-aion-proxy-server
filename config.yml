@@ -1,0 +1,36 @@
+# Simple configuration for proxying HTTP and WebSocket requests
+
+# Port number for the proxy server to listen on
+# Default: 8080
+port: 8080
+
+# Target domain to proxy requests to (without protocol)
+# This domain will be used for both HTTP and WebSocket connections
+# Example: "api.example.com", "localhost:4000"
+domain: "api.aion.to"
+
+# Use secure connections (HTTPS/WSS) to target server
+# true: uses https:// and wss:// protocols
+# false: uses http:// and ws:// protocols
+secure: true
+
+# Connection timeout in milliseconds
+# How long to wait for target server to respond before giving up
+# Recommended: 15000-30000 (15-30 seconds)
+connectionTimeout: 20000
+
+# Maximum number of retry attempts for failed connections
+# If connection fails, proxy will retry this many times
+# Recommended: 1-5 retries
+maxRetries: 1
+
+# Delay between retry attempts in milliseconds
+# How long to wait before retrying a failed connection
+# Recommended: 1000-5000 (1-5 seconds)
+retryDelay: 1000
+
+# How it works:
+# - HTTP requests: http://localhost:8080/api/graphql -> https://api.aion.to/api/graphql
+# - WebSocket requests: ws://localhost:8080/ws/graphql -> wss://api.aion.to/ws/graphql
+# - WebSocket protocol is automatically detected from client headers
+# - All paths are proxied transparently to the target domain
