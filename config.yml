@@ -19,16 +19,6 @@ secure: true
 # Recommended: 15000-30000 (15-30 seconds)
 connectionTimeout: 20000
 
-# Maximum number of retry attempts for failed connections
-# If connection fails, proxy will retry this many times
-# Recommended: 1-5 retries
-maxRetries: 1
-
-# Delay between retry attempts in milliseconds
-# How long to wait before retrying a failed connection
-# Recommended: 1000-5000 (1-5 seconds)
-retryDelay: 1000
-
 # How it works:
 # - HTTP requests: http://localhost:8080/api/graphql -> https://api.aion.to/api/graphql
 # - WebSocket requests: ws://localhost:8080/ws/graphql -> wss://api.aion.to/ws/graphql

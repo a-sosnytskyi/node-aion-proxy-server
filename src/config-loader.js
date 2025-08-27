@@ -13,8 +13,6 @@ function loadConfig(configPath = 'config.yml') {
     domain: null,
     secure: true,
     connectionTimeout: 15000,
-    maxRetries: 1,
-    retryDelay: 1000
   };
 
   try {
